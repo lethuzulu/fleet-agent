@@ -1,0 +1,26 @@
+[Unit]
+Description=Fleet Agent — system metrics and config polling daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/agent-service
+Restart=on-failure
+RestartSec=5
+
+# State directory created by systemd on first start.
+StateDirectory=fleet-agent
+
+# Override any of these with a drop-in or EnvironmentFile.
+Environment=AGENT_ID=agent-001
+Environment=COLLECTOR_URL=http://collector.example.com:3000
+Environment=INTERVAL_SECS=30
+Environment=PING_TARGETS=8.8.8.8,1.1.1.1
+
+# Optional: run as a dedicated user for least privilege.
+# User=fleet-agent
+# Group=fleet-agent
+
+[Install]
+WantedBy=multi-user.target
