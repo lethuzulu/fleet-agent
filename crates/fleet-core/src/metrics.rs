@@ -144,3 +144,40 @@ async fn tcp_rtt(host: &str) -> Option<f64> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_serialises_and_deserialises() {
+        let snap = Snapshot {
+            agent_id: "test-agent".into(),
+            timestamp_ms: 1_000_000,
+            cpu: CpuMetrics { core_usage: vec![12.5, 34.0], global_usage: 23.25 },
+            memory: MemoryMetrics {
+                total_bytes: 8 * 1024 * 1024 * 1024,
+                used_bytes: 4 * 1024 * 1024 * 1024,
+                available_bytes: 4 * 1024 * 1024 * 1024,
+            },
+            interfaces: vec![NetworkInterface {
+                name: "eth0".into(),
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                is_up: true,
+            }],
+            pings: vec![PingResult {
+                target: "8.8.8.8".into(),
+                rtt_ms: Some(12.5),
+                method: "tcp".into(),
+            }],
+        };
+
+        let json = serde_json::to_string(&snap).expect("serialise");
+        let back: Snapshot = serde_json::from_str(&json).expect("deserialise");
+
+        assert_eq!(back.agent_id, snap.agent_id);
+        assert_eq!(back.cpu.global_usage, snap.cpu.global_usage);
+        assert_eq!(back.pings[0].method, "tcp");
+    }
+}

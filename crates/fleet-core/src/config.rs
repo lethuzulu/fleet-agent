@@ -31,6 +31,34 @@ impl AgentConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_interval_is_rejected() {
+        let cfg = AgentConfig { interval_secs: 0, ..AgentConfig::default() };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn empty_agent_id_is_rejected() {
+        let cfg = AgentConfig { agent_id: String::new(), ..AgentConfig::default() };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn empty_collector_url_is_rejected() {
+        let cfg = AgentConfig { collector_url: String::new(), ..AgentConfig::default() };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn default_config_is_valid() {
+        assert!(AgentConfig::default().validate().is_ok());
+    }
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
