@@ -31,6 +31,8 @@ pub struct PingResult {
     pub target: String,
     /// Round-trip time in milliseconds, or None if the host was unreachable.
     pub rtt_ms: Option<f64>,
+    /// "icmp" when CAP_NET_RAW is available, "tcp" otherwise.
+    pub method: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,9 +46,14 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    pub fn collect(agent_id: &str, ping_results: Vec<PingResult>) -> Result<Self> {
+    pub async fn collect(agent_id: &str, ping_results: Vec<PingResult>) -> Result<Self> {
         let mut sys = System::new_all();
-        sys.refresh_all();
+        sys.refresh_cpu_usage();
+        // sysinfo computes CPU usage as a delta between two samples; without
+        // this pause the first reading is always 0%.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
 
         let core_usage: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
         let global_usage = if core_usage.is_empty() {
@@ -90,33 +97,50 @@ impl Snapshot {
 
 pub async fn probe_targets(targets: &[String]) -> Vec<PingResult> {
     let mut results = Vec::with_capacity(targets.len());
-
     for target in targets {
-        let rtt_ms = ping_once(target).await;
-        results.push(PingResult {
-            target: target.clone(),
-            rtt_ms,
-        });
+        results.push(probe_one(target).await);
     }
-
     results
 }
 
-async fn ping_once(host: &str) -> Option<f64> {
+async fn probe_one(host: &str) -> PingResult {
+    // Try ICMP first; it gives the most accurate RTT but needs CAP_NET_RAW.
+    if let Some(rtt_ms) = icmp_ping(host).await {
+        return PingResult { target: host.to_string(), rtt_ms: Some(rtt_ms), method: "icmp".into() };
+    }
+
+    // Fall back to TCP connect latency — no special permissions required.
+    let rtt_ms = tcp_rtt(host).await;
+    PingResult { target: host.to_string(), rtt_ms, method: "tcp".into() }
+}
+
+async fn icmp_ping(host: &str) -> Option<f64> {
     use std::net::IpAddr;
-
-    let ip: IpAddr = match host.parse() {
-        Ok(ip) => ip,
-        Err(_) => return None,
-    };
-
+    let ip: IpAddr = host.parse().ok()?;
     let payload = [0u8; 8];
     let client = surge_ping::Client::new(&surge_ping::Config::default()).ok()?;
     let mut pinger = client.pinger(ip, surge_ping::PingIdentifier(1)).await;
     pinger.timeout(Duration::from_secs(2));
-
     match pinger.ping(surge_ping::PingSequence(0), &payload).await {
         Ok((_reply, rtt)) => Some(rtt.as_secs_f64() * 1000.0),
         Err(_) => None,
     }
+}
+
+/// Measures TCP handshake RTT to port 80, then 443 as a fallback.
+/// Works without any elevated permissions.
+async fn tcp_rtt(host: &str) -> Option<f64> {
+    for port in [80u16, 443] {
+        let addr = format!("{host}:{port}");
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await;
+        if let Ok(Ok(_)) = result {
+            return Some(start.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    None
 }

@@ -19,7 +19,6 @@ struct AppState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
 struct ConfigOverride {
     interval_secs: Option<u64>,
     ping_targets: Option<Vec<String>>,
@@ -50,7 +49,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/metrics", post(receive_metrics))
-        .route("/config/:agent_id", get(get_config))
+        .route("/config/:agent_id", get(get_config).put(put_config))
         .route("/dashboard", get(dashboard))
         .with_state(state);
 
@@ -102,6 +101,32 @@ async fn get_config(
             (StatusCode::OK, Json(val)).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn put_config(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Json(body): Json<ConfigOverride>,
+) -> impl IntoResponse {
+    let payload = match serde_json::to_string(&body) {
+        Ok(p) => p,
+        Err(_) => return StatusCode::BAD_REQUEST,
+    };
+    let db = state.db.lock().unwrap();
+    match db.execute(
+        "INSERT INTO config_overrides (agent_id, payload) VALUES (?1, ?2)
+         ON CONFLICT(agent_id) DO UPDATE SET payload = excluded.payload",
+        params![agent_id, payload],
+    ) {
+        Ok(_) => {
+            info!("Config override set for {agent_id}");
+            StatusCode::OK
+        }
+        Err(e) => {
+            tracing::error!("DB write failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 

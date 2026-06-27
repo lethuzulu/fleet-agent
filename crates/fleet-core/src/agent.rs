@@ -32,7 +32,7 @@ impl Agent {
 
             // Collect metrics and ship them.
             let pings = probe_targets(&cfg.ping_targets).await;
-            match Snapshot::collect(&cfg.agent_id, pings) {
+            match Snapshot::collect(&cfg.agent_id, pings).await {
                 Ok(snapshot) => {
                     if let Err(e) = self.client.post_metrics(&snapshot).await {
                         warn!("Failed to post metrics: {e}");
@@ -69,6 +69,9 @@ impl Agent {
 
         match candidate.validate() {
             Ok(()) => {
+                if candidate == *current {
+                    return; // nothing changed, skip the write and log noise
+                }
                 if let Err(e) = self.store.save(&candidate) {
                     warn!("Could not persist new config: {e}");
                     return;
